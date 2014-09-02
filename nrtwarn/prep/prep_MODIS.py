@@ -54,10 +54,10 @@ def get_mask(modQA, dilate=7):
     # Identify land from water
     land = (np.mod(np.right_shift(modQA, 3) + 6, 8) / 7).astype(np.uint8)
     # Identify cloud
-    cloud = (np.mod(modQA, 8) |  #
-             np.mod(np.right_shift(modQA, 8), 4) |
-             np.mod(np.right_shift(modQA, 10), 2) |
-             np.mod(np.right_shift(modQA, 13), 2)) > 0
+    cloud = (np.mod(modQA, 8) |  # unsure!
+             np.mod(np.right_shift(modQA, 8), 4) |  # cirrus == '00' (none)
+             np.mod(np.right_shift(modQA, 10), 2) |  # cloud mask == '0'
+             np.mod(np.right_shift(modQA, 13), 2)) > 0  # adjacent to cloud
 
     cloud_buffer = scipy.ndimage.morphology.binary_dilation(
         cloud, structure=np.ones((dilate, dilate)))
