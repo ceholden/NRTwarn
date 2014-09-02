@@ -33,18 +33,18 @@ class PreprocessTest(unittest.TestCase):
         self.state = self.state_ds.GetRasterBand(1).ReadAsArray()
         self.state_ds = None
 
-    def testSetUp(self):
+    def test_setUp(self):
         """ Test full sum of QA band """
         total = 14906462501
         self.assertEqual(self.state.sum(), total)
 
-    def testMaskSum(self):
+    def test_mask_sum(self):
         """ Test total number of good pixels in mask result """
         total = 1048607
         mask = prep_MODIS.get_mask(self.state, dilate=7)
         self.assertEqual(mask.sum(), total)
 
-    def testMaskLocations(self):
+    def test_mask_locations(self):
         """ Test assortment of pixel values in mask """
         px = [49, 349, 999, 998, 749, 1199]
         py = [0, 98, 199, 399, 998, 0]
@@ -59,6 +59,16 @@ class PreprocessTest(unittest.TestCase):
                 'Pixel x/y {px}/{py} is wrong ({m} vs. {t})'.format(
                     px=_px, py=_py, m=mask[_py, _px], t=_v))
 
+    def test_enlarge(self):
+        """ Test image rescaling """
+        output = np.array([[1, 1, 0, 0],
+                           [1, 1, 0, 0],
+                           [0, 0, 1, 1],
+                           [0, 0, 1, 1]])
+
+        scaled = prep_MODIS.enlarge(np.eye(2), 2)
+
+        np.testing.assert_array_equal(output, scaled)
 
 if __name__ == '__main__':
     unittest.main()

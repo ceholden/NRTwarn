@@ -65,6 +65,20 @@ def get_mask(modQA, dilate=7):
     return ((cloud_buffer == 0) * land)
 
 
+def enlarge(array, scaling):
+    """ Enlarge an array by a scaling factor
+
+    Args:
+      array (ndarray): array to be scaled
+      scaling (int): amount of scaling
+
+    Returns:
+      scaled (ndarray): scaled array
+
+    """
+    return np.kron(array, np.ones((scaling, scaling)))
+
+
 if __name__ == '__main__':
     args = docopt(__doc__, version=_version)
 
@@ -93,4 +107,4 @@ if __name__ == '__main__':
     ds = gdal.Open(sds_qa[0], gdal.GA_ReadOnly)
     qa_band = ds.GetRasterBand(1).ReadAsArray()
 
-    get_mask(qa_band)
+    enlarge(get_mask(qa_band), 4).shape
