@@ -2,10 +2,10 @@
 """ Preprocess MODIS MOD09GA/MYD09GA and MOD09GQ/MYD09GQ
 
 Usage:
-    prep_MODIS.py [options] <location>
+    prep_MODIS.py [options] <input_location> <output_location>
 
 Options:
-    --pattern=<pattern>     Glob pattern for files to preprocess [default: *]
+    --pattern=<pattern>     Pattern for files to preprocess [default: M*09*hdf]
     -n --ncpu=<n>           Number of CPUs to use [default: 1]
     --nodata=<ndv>          Output NODATA value [default: -9999]
     -v --verbose            Show verbose debugging options
@@ -35,6 +35,56 @@ logging.basicConfig(format='%(asctime)s %(levelname)s: %(message)s',
                     level=logging.INFO,
                     datefmt='%H:%M:%S')
 logger = logging.getLogger(__name__)
+
+
+def find_MODIS_pairs(location, pattern='M*09*hdf'):
+    """ Finds matching sets of M[OY]D09GA and M[OY]D09GQ within location
+
+    Args:
+      location (str): directory of stored data
+      pattern (str, optional): glob pattern to limit search
+
+    Returns:
+      pairs (list): list of tuples containing M[OY]D09GQ and M[OY]D09GA
+
+    """
+    files = [os.path.join(location, f) for f in
+             fnmatch.filter(os.listdir(location), pattern)]
+
+    if len(files) < 2:
+        raise IOError('Could not find any MODIS image pairs')
+
+    # Parse out product and acquisition date
+    products = []
+    dates = []
+    for f in files:
+        s = os.path.basename(f).split('.')
+        products.append(s[0])
+        dates.append(s[1])
+
+    products = np.array(products)
+    dates = np.array(dates)
+
+    # Retain dates if there are matching MOD09GA/MOD09GQ or MYD09GA/MYD09GQ
+    pairs = []
+    for d in np.unique(dates):
+        i = np.where(dates == d)[0]
+        prods = products[i]
+
+        i_mod09ga = np.core.defchararray.startswith(prods, 'MOD09GA')
+        i_mod09gq = np.core.defchararray.startswith(prods, 'MOD09GQ')
+        i_myd09ga = np.core.defchararray.startswith(prods, 'MYD09GA')
+        i_myd09gq = np.core.defchararray.startswith(prods, 'MYD09GQ')
+
+        if i_mod09gq.sum() == 1 and i_mod09ga.sum() == 1:
+            pairs.append((files[i[i_mod09gq]], files[i[i_mod09ga]]))
+        if i_myd09gq.sum() == 1 and i_myd09ga.sum() == 1:
+            pairs.append((files[i[i_myd09gq]], files[i[i_myd09ga]]))
+
+    logger.debug('Found {n} pairs of M[OY]D09GQ and M[OY]D09GA'.format(
+        n=len(pairs)))
+
+    return pairs
 
 
 def get_mask(modQA, dilate=7):
@@ -88,7 +138,7 @@ if __name__ == '__main__':
     if args['--verbose']:
         logger.setLevel(logging.DEBUG)
 
-    location = args['<location>']
+    location = args['<input_location>']
 
     pattern = args['--pattern']
     ncpu = int(args['--ncpu'])
@@ -107,4 +157,4 @@ if __name__ == '__main__':
     ds = gdal.Open(sds_qa[0], gdal.GA_ReadOnly)
     qa_band = ds.GetRasterBand(1).ReadAsArray()
 
-    enlarge(get_mask(qa_band), 4).shape
+    get_mask(qa_band)

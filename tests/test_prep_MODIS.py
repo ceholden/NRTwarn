@@ -10,7 +10,6 @@ from osgeo import gdal
 gdal.UseExceptions()
 gdal.AllRegister()
 
-
 here = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(os.path.join(here, '../'))
 
@@ -69,6 +68,31 @@ class PreprocessTest(unittest.TestCase):
         scaled = prep_MODIS.enlarge(np.eye(2), 2)
 
         np.testing.assert_array_equal(output, scaled)
+
+    def test_find_MODIS_pairs(self):
+        """ Test finding of MODIS image pairs from example dataset """
+        test_location = os.path.join(here, 'MOD09G')
+
+        # Test against included dataset
+        images = [('MOD09GQ.A2000055.h10v08.005.2006268014216.hdf',
+                  'MOD09GA.A2000055.h10v08.005.2006268014216.hdf')]
+
+        found_images = prep_MODIS.find_MODIS_pairs(test_location, 'MOD09G*')
+        found_images = [(os.path.basename(ga), os.path.basename(gq))
+                        for ga, gq in found_images]
+
+        self.assertListEqual(images, found_images)
+
+    def test_find_MODIS_pairs_bad_pattern(self):
+        """ Test finding of MODIS image pairs with bad pattern """
+        test_location = os.path.join(here, 'MOD09G')
+
+        # Test against included dataset with bad pattern
+        with self.assertRaises(IOError):
+            prep_MODIS.find_MODIS_pairs(test_location, 'MYD09G*')
+
+
+
 
 if __name__ == '__main__':
     unittest.main()
