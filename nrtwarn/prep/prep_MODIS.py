@@ -7,7 +7,7 @@ Usage:
 Options:
     --pattern=<pattern>     Pattern for files to preprocess [default: M*09*hdf]
     -n --ncpu=<n>           Number of CPUs to use [default: 1]
-    --nodata=<ndv>          Output NODATA value [default: -9999]
+    --nodata=<ndv>          Output NODATA value [default: -28672]
     -v --verbose            Show verbose debugging options
     -q --quiet              Do not show extra information
     -h --help               Show help
@@ -36,9 +36,19 @@ logging.basicConfig(format='%(asctime)s %(levelname)s: %(message)s',
                     datefmt='%H:%M:%S')
 logger = logging.getLogger(__name__)
 
+# Product subdataset information
+ga_state = 1  # 1km state flags
+ga_vza = 3  # 1km view zenith angle
+ga_green = 13  # 500m green band
+ga_swir1 = 15  # 500m swir1 band
+ga_qc = 17  # 500m QC band
+gq_red = 1  # 250m red band
+gq_nir = 2  # 250m NIR band
+gq_qc = 3  # 250m QC band
+
 
 def find_MODIS_pairs(location, pattern='M*09*hdf'):
-    """ Finds matching sets of M[OY]D09GA and M[OY]D09GQ within location
+    """ Finds matching sets of M[OY]D09GQ and M[OY]D09GA within location
 
     Args:
       location (str): directory of stored data
@@ -81,10 +91,105 @@ def find_MODIS_pairs(location, pattern='M*09*hdf'):
         if i_myd09gq.sum() == 1 and i_myd09ga.sum() == 1:
             pairs.append((files[i[i_myd09gq]], files[i[i_myd09ga]]))
 
-    logger.debug('Found {n} pairs of M[OY]D09GQ and M[OY]D09GA'.format(
-        n=len(pairs)))
-
     return pairs
+
+
+def create_stack(pair, outdir, ndv=-28672):
+    """ Create output stack from MODIS image pairs (M[OY]D09GQ & M[OY]D09GA)
+
+    Args:
+      pair (tuple): pairs of images (M[OY]D09GQ & M[OY]D09GA)
+      outdir (str): location to output stack
+      ndv (int, optional): NoDataValue for output
+
+    Stack will be formatted as:
+        Band        Definition
+        ----------------------
+        1           250m red from M[OY]D09GQ
+        2           250m NIR from M[OY]D09GQ
+        3           500m green from M[OY]D09GA
+        4           500m SWIR1 from M[OY]D09GA
+        5           Mask / VZA band from M[OY]D09GA
+
+    Mask values     Definition
+    --------------------------
+        0           Not-clear, or not-land surface
+        0+          View zenith angle * 100
+
+    """
+    # Open and find subdatasets
+    gq_ds = gdal.Open(pair[0], gdal.GA_ReadOnly)
+    ga_ds = gdal.Open(pair[1], gdal.GA_ReadOnly)
+
+    # Read in datasets
+    f_red = gq_ds.GetSubDatasets()[gq_red]
+    f_nir = gq_ds.GetSubDatasets()[gq_nir]
+#    f_250m_qc = gq_ds.GetSubDatasets()[gq_qc]
+
+    ds_red = gdal.Open(f_red[0], gdal.GA_ReadOnly)
+    ds_nir = gdal.Open(f_nir[0], gdal.GA_ReadOnly)
+#    ds_250m_qc = gdal.Open(f_250m_qc[0], gdal.GA_ReadOnly)
+
+    f_state = ga_ds.GetSubDatasets()[ga_state]
+    f_vza = ga_ds.GetSubDatasets()[ga_vza]
+    f_green = ga_ds.GetSubDatasets()[ga_green]
+    f_swir1 = ga_ds.GetSubDatasets()[ga_swir1]
+
+    ds_state = gdal.Open(f_state[0], gdal.GA_ReadOnly)
+    ds_vza = gdal.Open(f_vza[0], gdal.GA_ReadOnly)
+    ds_green = gdal.Open(f_green[0], gdal.GA_ReadOnly)
+    ds_swir1 = gdal.Open(f_swir1[0], gdal.GA_ReadOnly)
+
+    # Create output file
+    _temp = os.path.basename(pair[0]).split('.')
+    out_name = _temp[0][0:3] + '_' + _temp[1] + '_stack.gtif'
+    output = os.path.join(outdir, out_name)
+
+    driver = gdal.GetDriverByName('GTiff')
+    out_ds = driver.Create(output,
+                           ds_red.RasterYSize, ds_red.RasterXSize, 5,
+                           gdal.GDT_Int16,
+                           options=['TILED=YES',
+                                    #'BLOCKXSIZE=%s' % ds_red.RasterXSize,
+                                    #'BLOCKYSIZE=100'
+                                    'COMPRESS=LZW'])
+
+    out_ds.SetProjection(ds_red.GetProjection())
+    out_ds.SetGeoTransform(ds_red.GetGeoTransform())
+
+    out_ds.SetMetadata(ga_ds.GetMetadata())
+    out_ds.GetRasterBand(1).SetNoDataValue(-28672)
+
+    # Create stack
+    stack = np.ones((ds_red.RasterYSize, ds_red.RasterXSize, 5),
+                    dtype=np.int16)
+
+    stack[:, :, 0] = ds_red.GetRasterBand(1).ReadAsArray()
+    stack[:, :, 1] = ds_nir.GetRasterBand(1).ReadAsArray()
+    stack[:, :, 2] = enlarge(ds_green.GetRasterBand(1).ReadAsArray(), 2)
+    stack[:, :, 3] = enlarge(ds_swir1.GetRasterBand(1).ReadAsArray(), 2)
+
+    # Perform masking -- 1 for land * VZA per pixel
+    mask = get_mask(ds_state.GetRasterBand(1).ReadAsArray()).astype(np.int16)
+    mask = mask * ds_vza.GetRasterBand(1).ReadAsArray()
+    stack[:, :, 4] = enlarge(mask, 4)
+
+    # Write data
+    for b in range(stack.shape[2]):
+        out_ds.GetRasterBand(b + 1).WriteArray(stack[:, :, b])
+
+    # Close
+    ga_ds = None
+    gq_ds = None
+
+    ds_red = None
+    ds_nir = None
+    ds_vza = None
+    ds_state = None
+    ds_green = None
+    ds_swir1 = None
+
+    out_ds = None
 
 
 def get_mask(modQA, dilate=7):
@@ -139,22 +244,34 @@ if __name__ == '__main__':
         logger.setLevel(logging.DEBUG)
 
     location = args['<input_location>']
+    output = args['<output_location>']
+    if not os.path.isdir(output):
+        # Make output directory
+        try:
+            os.makedirs(output)
+        except:
+            if os.path.isdir(output):
+                pass
+            else:
+                logger.error('Output directory does not exist and could '
+                             'not create output directory')
+                raise
 
     pattern = args['--pattern']
     ncpu = int(args['--ncpu'])
     ndv = int(args['--nodata'])
 
-    # TEST
-    logger.warning('JUST TESTING ON EXAMPLE')
+    if ncpu > 1:
+        raise NotImplementedError('TODO - more CPUs!')
 
-    here = os.path.dirname(os.path.abspath(__file__))
-    hdf = '../../tests/MOD09G/MOD09GA.A2000055.h10v08.005.2006268014216.hdf'
-    ds = gdal.Open(os.path.join(here, hdf), gdal.GA_ReadOnly)
+    logger.debug('Finding pairs of MODIS data')
+    pairs = find_MODIS_pairs(location, pattern)
+    logger.info('Found {n} pairs of M[OY]D09GQ and M[OY]D09GA'.format(
+        n=len(pairs)))
 
-    sds_qa = ds.GetSubDatasets()[1]
-    ds = None
+    for i, p in enumerate(pairs):
+        logger.info('Stacking {i} / {n}: {p}'.format(
+            i=i, n=len(pairs), p=os.path.basename(p[0])))
+        create_stack(p, output, ndv)
 
-    ds = gdal.Open(sds_qa[0], gdal.GA_ReadOnly)
-    qa_band = ds.GetRasterBand(1).ReadAsArray()
-
-    get_mask(qa_band)
+    logger.info('Complete')
