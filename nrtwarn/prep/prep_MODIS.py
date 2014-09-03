@@ -8,6 +8,7 @@ Options:
     --pattern=<pattern>     Pattern for files to preprocess [default: M*09*hdf]
     -n --ncpu=<n>           Number of CPUs to use [default: 1]
     --nodata=<ndv>          Output NODATA value [default: -28672]
+    --compression=<algo>    Compression algorithm [default: PACKBITS]
     -v --verbose            Show verbose debugging options
     -q --quiet              Do not show extra information
     -h --help               Show help
@@ -94,13 +95,14 @@ def find_MODIS_pairs(location, pattern='M*09*hdf'):
     return pairs
 
 
-def create_stack(pair, outdir, ndv=-28672):
+def create_stack(pair, outdir, ndv=-28672, compression='PACKBITS'):
     """ Create output stack from MODIS image pairs (M[OY]D09GQ & M[OY]D09GA)
 
     Args:
       pair (tuple): pairs of images (M[OY]D09GQ & M[OY]D09GA)
       outdir (str): location to output stack
       ndv (int, optional): NoDataValue for output
+      compression (str, optional): compression algorithm to use
 
     Stack will be formatted as:
         Band        Definition
@@ -122,23 +124,14 @@ def create_stack(pair, outdir, ndv=-28672):
     ga_ds = gdal.Open(pair[1], gdal.GA_ReadOnly)
 
     # Read in datasets
-    f_red = gq_ds.GetSubDatasets()[gq_red]
-    f_nir = gq_ds.GetSubDatasets()[gq_nir]
-#    f_250m_qc = gq_ds.GetSubDatasets()[gq_qc]
+    ds_red = gdal.Open(gq_ds.GetSubDatasets()[gq_red][0], gdal.GA_ReadOnly)
+    ds_nir = gdal.Open(gq_ds.GetSubDatasets()[gq_nir][0], gdal.GA_ReadOnly)
+#    ds_250m_qc = gdal.Open(gq_ds.GetSubDatasets()[gq_qc][0], gdal.GA_ReadOnly)
 
-    ds_red = gdal.Open(f_red[0], gdal.GA_ReadOnly)
-    ds_nir = gdal.Open(f_nir[0], gdal.GA_ReadOnly)
-#    ds_250m_qc = gdal.Open(f_250m_qc[0], gdal.GA_ReadOnly)
-
-    f_state = ga_ds.GetSubDatasets()[ga_state]
-    f_vza = ga_ds.GetSubDatasets()[ga_vza]
-    f_green = ga_ds.GetSubDatasets()[ga_green]
-    f_swir1 = ga_ds.GetSubDatasets()[ga_swir1]
-
-    ds_state = gdal.Open(f_state[0], gdal.GA_ReadOnly)
-    ds_vza = gdal.Open(f_vza[0], gdal.GA_ReadOnly)
-    ds_green = gdal.Open(f_green[0], gdal.GA_ReadOnly)
-    ds_swir1 = gdal.Open(f_swir1[0], gdal.GA_ReadOnly)
+    ds_state = gdal.Open(ga_ds.GetSubDatasets()[ga_state][0], gdal.GA_ReadOnly)
+    ds_vza = gdal.Open(ga_ds.GetSubDatasets()[ga_vza][0], gdal.GA_ReadOnly)
+    ds_green = gdal.Open(ga_ds.GetSubDatasets()[ga_green][0], gdal.GA_ReadOnly)
+    ds_swir1 = gdal.Open(ga_ds.GetSubDatasets()[ga_swir1][0], gdal.GA_ReadOnly)
 
     # Create output file
     _temp = os.path.basename(pair[0]).split('.')
@@ -146,13 +139,13 @@ def create_stack(pair, outdir, ndv=-28672):
     output = os.path.join(outdir, out_name)
 
     driver = gdal.GetDriverByName('GTiff')
+    opts = ['TILED=YES']
+    if compression:
+        opts.append('COMPRESS=%s' % compression)
     out_ds = driver.Create(output,
-                           ds_red.RasterYSize, ds_red.RasterXSize, 5,
+                           ds_red.RasterYSize, ds_red.RasterXSize, 6,
                            gdal.GDT_Int16,
-                           options=['TILED=YES',
-                                    #'BLOCKXSIZE=%s' % ds_red.RasterXSize,
-                                    #'BLOCKYSIZE=100'
-                                    'COMPRESS=LZW'])
+                           options=opts)
 
     out_ds.SetProjection(ds_red.GetProjection())
     out_ds.SetGeoTransform(ds_red.GetGeoTransform())
@@ -161,7 +154,7 @@ def create_stack(pair, outdir, ndv=-28672):
     out_ds.GetRasterBand(1).SetNoDataValue(-28672)
 
     # Create stack
-    stack = np.ones((ds_red.RasterYSize, ds_red.RasterXSize, 5),
+    stack = np.ones((ds_red.RasterYSize, ds_red.RasterXSize, 6),
                     dtype=np.int16)
 
     stack[:, :, 0] = ds_red.GetRasterBand(1).ReadAsArray()
@@ -169,10 +162,10 @@ def create_stack(pair, outdir, ndv=-28672):
     stack[:, :, 2] = enlarge(ds_green.GetRasterBand(1).ReadAsArray(), 2)
     stack[:, :, 3] = enlarge(ds_swir1.GetRasterBand(1).ReadAsArray(), 2)
 
-    # Perform masking -- 1 for land * VZA per pixel
+    # Perform masking -- 1 for land and VZA in separate band
     mask = get_mask(ds_state.GetRasterBand(1).ReadAsArray()).astype(np.int16)
-    mask = mask * ds_vza.GetRasterBand(1).ReadAsArray()
     stack[:, :, 4] = enlarge(mask, 4)
+    stack[:, :, 5] = enlarge(ds_vza.GetRasterBand(1).ReadAsArray(), 4)
 
     # Write data
     for b in range(stack.shape[2]):
@@ -260,6 +253,7 @@ if __name__ == '__main__':
     pattern = args['--pattern']
     ncpu = int(args['--ncpu'])
     ndv = int(args['--nodata'])
+    compression = args['--compression']
 
     if ncpu > 1:
         raise NotImplementedError('TODO - more CPUs!')
@@ -272,6 +266,6 @@ if __name__ == '__main__':
     for i, p in enumerate(pairs):
         logger.info('Stacking {i} / {n}: {p}'.format(
             i=i, n=len(pairs), p=os.path.basename(p[0])))
-        create_stack(p, output, ndv)
+        create_stack(p, output, ndv, compression)
 
     logger.info('Complete')
