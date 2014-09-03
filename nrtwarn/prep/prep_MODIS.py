@@ -254,6 +254,8 @@ if __name__ == '__main__':
     ncpu = int(args['--ncpu'])
     ndv = int(args['--nodata'])
     compression = args['--compression']
+    if compression.lower() == 'none':
+        compression = None
 
     if ncpu > 1:
         raise NotImplementedError('TODO - more CPUs!')
