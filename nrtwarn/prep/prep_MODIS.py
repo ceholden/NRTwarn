@@ -8,7 +8,10 @@ Options:
     --pattern=<pattern>     Pattern for files to preprocess [default: M*09*hdf]
     -n --ncpu=<n>           Number of CPUs to use [default: 1]
     --nodata=<ndv>          Output NODATA value [default: -28672]
-    --compression=<algo>    Compression algorithm [default: PACKBITS]
+    --compression=<algo>    Compression algorithm [default: None]
+    --tiled                 Create tiled TIFF files instead of stripped
+    --blockxsize=<n>        X blocksize for tiles / stripes [default: None]
+    --blockysize=<n>        Y blocksize for tiles / stripes [default: None]
     -v --verbose            Show verbose debugging options
     -q --quiet              Do not show extra information
     -h --help               Show help
@@ -46,6 +49,8 @@ ga_qc = 17  # 500m QC band
 gq_red = 1  # 250m red band
 gq_nir = 2  # 250m NIR band
 gq_qc = 3  # 250m QC band
+
+compress_algos = ['LZW', 'PACKBITS', 'DEFLATE', 'None']
 
 
 def find_MODIS_pairs(location, pattern='M*09*hdf'):
@@ -95,7 +100,8 @@ def find_MODIS_pairs(location, pattern='M*09*hdf'):
     return pairs
 
 
-def create_stack(pair, outdir, ndv=-28672, compression='PACKBITS'):
+def create_stack(pair, outdir, ndv=-28672, compression='None',
+                 tiled=False, blockxsize=None, blockysize=None):
     """ Create output stack from MODIS image pairs (M[OY]D09GQ & M[OY]D09GA)
 
     Args:
@@ -103,6 +109,9 @@ def create_stack(pair, outdir, ndv=-28672, compression='PACKBITS'):
       outdir (str): location to output stack
       ndv (int, optional): NoDataValue for output
       compression (str, optional): compression algorithm to use
+      tiled (bool, optional): use tiles instead of stripes
+      blockxsize (int, optional): tile width
+      blockysize (int, optional): tile or strip height
 
     Stack will be formatted as:
         Band        Definition
@@ -111,12 +120,12 @@ def create_stack(pair, outdir, ndv=-28672, compression='PACKBITS'):
         2           250m NIR from M[OY]D09GQ
         3           500m green from M[OY]D09GA
         4           500m SWIR1 from M[OY]D09GA
-        5           Mask / VZA band from M[OY]D09GA
+        5           Mask band from M[OY]D09GA
+        6           VZA * 100 from M[OY]D09GA
 
     Mask values     Definition
     --------------------------
         0           Not-clear, or not-land surface
-        0+          View zenith angle * 100
 
     """
     # Open and find subdatasets
@@ -133,15 +142,29 @@ def create_stack(pair, outdir, ndv=-28672, compression='PACKBITS'):
     ds_green = gdal.Open(ga_ds.GetSubDatasets()[ga_green][0], gdal.GA_ReadOnly)
     ds_swir1 = gdal.Open(ga_ds.GetSubDatasets()[ga_swir1][0], gdal.GA_ReadOnly)
 
-    # Create output file
+    # Output filename (pattern is: M[OY]D_A[YYYYDOY]_stack.gtif)
     _temp = os.path.basename(pair[0]).split('.')
     out_name = _temp[0][0:3] + '_' + _temp[1] + '_stack.gtif'
     output = os.path.join(outdir, out_name)
 
-    driver = gdal.GetDriverByName('GTiff')
-    opts = ['TILED=YES']
+    # Setup options
+    opts = []
+    if tiled:
+        opts.append('TILED=YES')
+
+    if blockxsize and tiled:
+        opts.append('BLOCKXSIZE=%s' % blockxsize)
+    if blockysize:
+        opts.append('BLOCKYSIZE=%s' % blockysize)
+
     if compression:
         opts.append('COMPRESS=%s' % compression)
+        if compression == 'LZW':
+            opts.append('PREDICTOR=2')
+
+    # Create file and setup metadata
+    driver = gdal.GetDriverByName('GTiff')
+
     out_ds = driver.Create(output,
                            ds_red.RasterYSize, ds_red.RasterXSize, 6,
                            gdal.GDT_Int16,
@@ -250,12 +273,36 @@ if __name__ == '__main__':
                              'not create output directory')
                 raise
 
+    # Optional arguments
     pattern = args['--pattern']
+
     ncpu = int(args['--ncpu'])
+
     ndv = int(args['--nodata'])
+
     compression = args['--compression']
     if compression.lower() == 'none':
         compression = None
+    else:
+        if compression not in compress_algos:
+            logger.error('Unknown compression algorithm. Available are:')
+            for _algo in compress_algos:
+                logger.error('    %s' % _algo)
+            sys.exit(1)
+
+    tiled = args['--tiled']
+
+    blockxsize = args['--blockxsize']
+    if blockxsize.lower() == 'none':
+        blockxsize = None
+    else:
+        blockxsize = int(blockxsize)
+
+    blockysize = args['--blockysize']
+    if blockysize.lower() == 'none':
+        blockysize = None
+    else:
+        blockysize = int(blockysize)
 
     if ncpu > 1:
         raise NotImplementedError('TODO - more CPUs!')
@@ -268,6 +315,9 @@ if __name__ == '__main__':
     for i, p in enumerate(pairs):
         logger.info('Stacking {i} / {n}: {p}'.format(
             i=i, n=len(pairs), p=os.path.basename(p[0])))
-        create_stack(p, output, ndv, compression)
+        create_stack(p, output,
+                     ndv=ndv, compression=compression,
+                     tiled=tiled,
+                     blockxsize=blockxsize, blockysize=blockysize)
 
     logger.info('Complete')
