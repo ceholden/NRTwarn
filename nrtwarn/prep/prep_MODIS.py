@@ -141,12 +141,13 @@ def check_resume(pairs, output):
     for p, o in zip(pairs, output):
         if os.path.isfile(o):
             try:
-                gdal.Open(o, gdal.GA_ReadOnly)
+                ds = gdal.Open(o, gdal.GA_ReadOnly)
+                ds = None
             except:
                 logger.warning('File {f} already exists but cannot be opened. \
                     Overwriting'.format(f=o))
             else:
-                logger.debug('Not skipping output {f}'.format(f=o))
+                logger.debug('Skipping output {f}'.format(f=o))
                 continue
         out_pairs.append(p)
         out_output.append(o)
@@ -154,13 +155,13 @@ def check_resume(pairs, output):
     return (out_pairs, out_output)
 
 
-def create_stack(pair, outdir, ndv=-28672, compression='None',
+def create_stack(pair, output, ndv=-28672, compression='None',
                  tiled=False, blockxsize=None, blockysize=None):
     """ Create output stack from MODIS image pairs (M[OY]D09GQ & M[OY]D09GA)
 
     Args:
       pair (tuple): pairs of images (M[OY]D09GQ & M[OY]D09GA)
-      outdir (str): location to output stack
+      output (str): location to output stack
       ndv (int, optional): NoDataValue for output
       compression (str, optional): compression algorithm to use
       tiled (bool, optional): use tiles instead of stripes
@@ -195,11 +196,6 @@ def create_stack(pair, outdir, ndv=-28672, compression='None',
     ds_vza = gdal.Open(ga_ds.GetSubDatasets()[ga_vza][0], gdal.GA_ReadOnly)
     ds_green = gdal.Open(ga_ds.GetSubDatasets()[ga_green][0], gdal.GA_ReadOnly)
     ds_swir1 = gdal.Open(ga_ds.GetSubDatasets()[ga_swir1][0], gdal.GA_ReadOnly)
-
-    # Output filename (pattern is: M[OY]D_A[YYYYDOY]_stack.gtif)
-    _temp = os.path.basename(pair[0]).split('.')
-    out_name = _temp[0][0:3] + '_' + _temp[1] + '_stack.gtif'
-    output = os.path.join(outdir, out_name)
 
     # Setup options
     opts = []
