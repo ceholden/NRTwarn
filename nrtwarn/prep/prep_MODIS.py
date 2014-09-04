@@ -12,6 +12,7 @@ Options:
     --tiled                 Create tiled TIFF files instead of stripped
     --blockxsize=<n>        X blocksize for tiles / stripes [default: None]
     --blockysize=<n>        Y blocksize for tiles / stripes [default: None]
+    --resume                Do not reprocess if output file exists
     -v --verbose            Show verbose debugging options
     -q --quiet              Do not show extra information
     -h --help               Show help
@@ -98,6 +99,59 @@ def find_MODIS_pairs(location, pattern='M*09*hdf'):
             pairs.append((files[i[i_myd09gq]], files[i[i_myd09ga]]))
 
     return pairs
+
+
+def get_output_names(pairs, outdir):
+    """ Get output filenames for pairs of MODIS images
+
+    Output filename pattern will be:
+
+        M[OY]D_A[YYYY][DOY]_stack.gtif
+
+    Args:
+      pairs (list): list of tuples containing M[OY]D09GQ and M[OY]D09GA
+      outdir (str): output directory
+
+    Returns:
+      output (list): list of output filenames
+
+    """
+    output_names = []
+    for pair in pairs:
+        _temp = os.path.basename(pair[0]).split('.')
+        out_name = _temp[0][0:3] + '_' + _temp[1] + '_stack.gtif'
+        output_names.append(os.path.join(outdir, out_name))
+
+    return output_names
+
+
+def check_resume(pairs, output):
+    """ Returns pairs and output with pre-existing results removed
+
+    Args:
+      pairs (list): list of tuples containing M[OY]D09GQ and M[OY]D09GA
+      output (list): list of output filenames for each entry in pairs
+
+    Returns:
+      pairs, output (tuple): pairs and outputs with pre-existing files removed
+
+    """
+    out_pairs = []
+    out_output = []
+    for p, o in zip(pairs, output):
+        if os.path.isfile(o):
+            try:
+                gdal.Open(o, gdal.GA_ReadOnly)
+            except:
+                logger.warning('File {f} already exists but cannot be opened. \
+                    Overwriting'.format(f=o))
+            else:
+                logger.debug('Not skipping output {f}'.format(f=o))
+                continue
+        out_pairs.append(p)
+        out_output.append(o)
+
+    return (out_pairs, out_output)
 
 
 def create_stack(pair, outdir, ndv=-28672, compression='None',
@@ -260,13 +314,13 @@ if __name__ == '__main__':
         logger.setLevel(logging.DEBUG)
 
     location = args['<input_location>']
-    output = args['<output_location>']
-    if not os.path.isdir(output):
+    outdir = args['<output_location>']
+    if not os.path.isdir(outdir):
         # Make output directory
         try:
-            os.makedirs(output)
+            os.makedirs(outdir)
         except:
-            if os.path.isdir(output):
+            if os.path.isdir(outdir):
                 pass
             else:
                 logger.error('Output directory does not exist and could '
@@ -279,6 +333,8 @@ if __name__ == '__main__':
     ncpu = int(args['--ncpu'])
 
     ndv = int(args['--nodata'])
+
+    resume = args['--resume']
 
     compression = args['--compression']
     if compression.lower() == 'none':
@@ -308,14 +364,21 @@ if __name__ == '__main__':
         raise NotImplementedError('TODO - more CPUs!')
 
     logger.debug('Finding pairs of MODIS data')
+
     pairs = find_MODIS_pairs(location, pattern)
+    output_names = get_output_names(pairs, outdir)
+
     logger.info('Found {n} pairs of M[OY]D09GQ and M[OY]D09GA'.format(
         n=len(pairs)))
 
-    for i, p in enumerate(pairs):
+    if resume:
+        pairs, output_names = check_resume(pairs, output_names)
+        logger.info('Resuming calculation for {n} files'.format(n=len(pairs)))
+
+    for i, (p, o) in enumerate(zip(pairs, output_names)):
         logger.info('Stacking {i} / {n}: {p}'.format(
             i=i, n=len(pairs), p=os.path.basename(p[0])))
-        create_stack(p, output,
+        create_stack(p, o,
                      ndv=ndv, compression=compression,
                      tiled=tiled,
                      blockxsize=blockxsize, blockysize=blockysize)
