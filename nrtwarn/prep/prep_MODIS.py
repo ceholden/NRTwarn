@@ -13,6 +13,7 @@ Options:
     --blockxsize=<n>        X blocksize for tiles / stripes [default: None]
     --blockysize=<n>        Y blocksize for tiles / stripes [default: None]
     --resume                Do not reprocess if output file exists
+    --skip_error            Skip image pair on error
     -v --verbose            Show verbose debugging options
     -q --quiet              Do not show extra information
     -h --help               Show help
@@ -332,6 +333,8 @@ if __name__ == '__main__':
 
     resume = args['--resume']
 
+    skip_error = args['--skip_error']
+
     compression = args['--compression']
     if compression.lower() == 'none':
         compression = None
@@ -371,12 +374,23 @@ if __name__ == '__main__':
         pairs, output_names = check_resume(pairs, output_names)
         logger.info('Resuming calculation for {n} files'.format(n=len(pairs)))
 
+    failed = 0
     for i, (p, o) in enumerate(zip(pairs, output_names)):
         logger.info('Stacking {i} / {n}: {p}'.format(
             i=i, n=len(pairs), p=os.path.basename(p[0])))
-        create_stack(p, o,
-                     ndv=ndv, compression=compression,
-                     tiled=tiled,
-                     blockxsize=blockxsize, blockysize=blockysize)
+        try:
+            create_stack(p, o,
+                         ndv=ndv, compression=compression,
+                         tiled=tiled,
+                         blockxsize=blockxsize, blockysize=blockysize)
+        except RuntimeError:
+            if skip_error:
+                logger.error('Could not preprocess pair: {p1} {p2}'.format(
+                    p1=p[0], p2=p[1]))
+                failed += 1
+            else:
+                raise
 
+    if failed != 0:
+        logger.error('Could not process {n} pairs'.format(n=failed))
     logger.info('Complete')
