@@ -24,7 +24,7 @@ class PreprocessTest(unittest.TestCase):
 
     def setUp(self):
         """ Load in test data """
-        mod09ga = 'MOD09G/MOD09GA.A2000055.h10v08.005.2006268014216.hdf'
+        mod09ga = 'MOD09G/MOD09GA.A2003303.h11v05.005.2008360010516.hdf'
         ds = gdal.Open(os.path.join(here, mod09ga), gdal.GA_ReadOnly)
         state_sds = ds.GetSubDatasets()[1]
         ds = None
@@ -34,12 +34,12 @@ class PreprocessTest(unittest.TestCase):
 
     def test_setUp(self):
         """ Test full sum of QA band """
-        total = 14906462501
+        total = 1545233519
         self.assertEqual(self.state.sum(), total)
 
     def test_mask_sum(self):
         """ Test total number of good pixels in mask result """
-        total = 1048607
+        total = 692398
         mask = prep_MODIS.get_mask(self.state, dilate=7)
         self.assertEqual(mask.sum(), total)
 
@@ -48,7 +48,7 @@ class PreprocessTest(unittest.TestCase):
         px = [49, 349, 999, 998, 749, 1199]
         py = [0, 98, 199, 399, 998, 0]
 
-        values = [0, 0, 1, 1, 1, 1]
+        values = [0, 1, 1, 1, 0, 1]
 
         mask = prep_MODIS.get_mask(self.state, dilate=7)
 
@@ -74,10 +74,10 @@ class PreprocessTest(unittest.TestCase):
         test_location = os.path.join(here, 'MOD09G')
 
         # Test against included dataset
-        images = [('MOD09GQ.A2000055.h10v08.005.2006268014216.hdf',
-                  'MOD09GA.A2000055.h10v08.005.2006268014216.hdf')]
+        images = [('MOD09GQ.A2003303.h11v05.005.2008360010516.hdf',
+                  'MOD09GA.A2003303.h11v05.005.2008360010516.hdf')]
 
-        found_images = prep_MODIS.find_MODIS_pairs(test_location, 'MOD09G*')
+        found_images = prep_MODIS.find_MODIS_pairs(test_location, 'MOD09G*hdf')
         found_images = [(os.path.basename(ga), os.path.basename(gq))
                         for ga, gq in found_images]
 
