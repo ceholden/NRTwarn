@@ -16,8 +16,6 @@ else
     years=$2
 fi
 
-cd /projectnb/landsat/projects/CMS/MODIS/
-
 mkdir -p $1/download
 cd $1/download
 
