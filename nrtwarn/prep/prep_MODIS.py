@@ -28,6 +28,8 @@ import os
 import sys
 
 from docopt import docopt
+
+import numexpr as ne
 import numpy as np
 from osgeo import gdal
 import scipy.ndimage
@@ -172,18 +174,25 @@ def create_stack(pair, output, ndv=-28672, compression='None',
     Stack will be formatted as:
         Band        Definition
         ----------------------
-        1           250m red from M[OY]D09GQ
-        2           250m NIR from M[OY]D09GQ
-        3           500m green from M[OY]D09GA
-        4           500m SWIR1 from M[OY]D09GA
-        5           Mask band from M[OY]D09GA
-        6           VZA * 100 from M[OY]D09GA
+        1           Simple ratio (SR) * 1000
+        2           Normalized Difference Vegetation Index (NDVI) * 10000
+        3           250m red from M[OY]D09GQ
+        4           250m NIR from M[OY]D09GQ
+        5           500m green from M[OY]D09GA
+        6           500m SWIR1 from M[OY]D09GA
+        7           1000m Mask band from M[OY]D09GA
+        8           1000m VZA * 100 from M[OY]D09GA
 
     Mask values     Definition
     --------------------------
         0           Not-clear, or not-land surface
 
     """
+    # Outut band descriptions
+    bands = ['SR * 1000', 'NDVI * 10000',
+             '250m Red * 10000', '250m NIR * 10000',
+             '500m green * 10000', '500m SWIR1 * 10000',
+             '1km QAQC Mask', '1km VZA * 100']
     # Open and find subdatasets
     gq_ds = gdal.Open(pair[0], gdal.GA_ReadOnly)
     ga_ds = gdal.Open(pair[1], gdal.GA_ReadOnly)
@@ -191,7 +200,6 @@ def create_stack(pair, output, ndv=-28672, compression='None',
     # Read in datasets
     ds_red = gdal.Open(gq_ds.GetSubDatasets()[gq_red][0], gdal.GA_ReadOnly)
     ds_nir = gdal.Open(gq_ds.GetSubDatasets()[gq_nir][0], gdal.GA_ReadOnly)
-#    ds_250m_qc = gdal.Open(gq_ds.GetSubDatasets()[gq_qc][0], gdal.GA_ReadOnly)
 
     ds_state = gdal.Open(ga_ds.GetSubDatasets()[ga_state][0], gdal.GA_ReadOnly)
     ds_vza = gdal.Open(ga_ds.GetSubDatasets()[ga_vza][0], gdal.GA_ReadOnly)
@@ -217,7 +225,7 @@ def create_stack(pair, output, ndv=-28672, compression='None',
     driver = gdal.GetDriverByName('GTiff')
 
     out_ds = driver.Create(output,
-                           ds_red.RasterYSize, ds_red.RasterXSize, 6,
+                           ds_red.RasterYSize, ds_red.RasterXSize, 8,
                            gdal.GDT_Int16,
                            options=opts)
 
@@ -227,23 +235,47 @@ def create_stack(pair, output, ndv=-28672, compression='None',
     out_ds.SetMetadata(ga_ds.GetMetadata())
     out_ds.GetRasterBand(1).SetNoDataValue(-28672)
 
-    # Create stack
-    stack = np.ones((ds_red.RasterYSize, ds_red.RasterXSize, 6),
-                    dtype=np.int16)
+    # Write out image
+    red = ds_red.GetRasterBand(1).ReadAsArray().astype(np.int16)
+    nir = ds_nir.GetRasterBand(1).ReadAsArray().astype(np.int16)
+    green = enlarge(ds_green.GetRasterBand(1).ReadAsArray().astype(np.int16),
+                    2)
+    swir1 = enlarge(ds_swir1.GetRasterBand(1).ReadAsArray().astype(np.int16),
+                    2)
 
-    stack[:, :, 0] = ds_red.GetRasterBand(1).ReadAsArray()
-    stack[:, :, 1] = ds_nir.GetRasterBand(1).ReadAsArray()
-    stack[:, :, 2] = enlarge(ds_green.GetRasterBand(1).ReadAsArray(), 2)
-    stack[:, :, 3] = enlarge(ds_swir1.GetRasterBand(1).ReadAsArray(), 2)
+    # Calculate SR and NDVI, masking invalid values
+    eqn = '(red <= 0) | (red >= 10000) | (nir <= 0) | (nir >= 10000) | ' \
+        '(green <= 0) | (green >= 10000) | (swir1 <= 0) | (swir1 >= 10000)'
+    invalid = ne.evaluate(eqn)
+
+    sr = ne.evaluate('nir / red * 1000').astype(np.int16)
+    ndvi = ne.evaluate('(nir - red) / (nir + red) * 10000').astype(np.int16)
+
+    # Apply valid range mask to data
+    red[invalid] = ndv
+    nir[invalid] = ndv
+    green[invalid] = ndv
+    swir1[invalid] = ndv
+
+    # Write out
+    out_ds.GetRasterBand(1).WriteArray(sr)
+    out_ds.GetRasterBand(2).WriteArray(ndvi)
+    out_ds.GetRasterBand(3).WriteArray(red)
+    out_ds.GetRasterBand(4).WriteArray(nir)
+    out_ds.GetRasterBand(5).WriteArray(green)
+    out_ds.GetRasterBand(6).WriteArray(swir1)
 
     # Perform masking -- 1 for land and VZA in separate band
     mask = get_mask(ds_state.GetRasterBand(1).ReadAsArray()).astype(np.int16)
-    stack[:, :, 4] = enlarge(mask, 4)
-    stack[:, :, 5] = enlarge(ds_vza.GetRasterBand(1).ReadAsArray(), 4)
+    out_ds.GetRasterBand(7).WriteArray(enlarge(mask, 4))
+
+    vza = np.abs(ds_vza.GetRasterBand(1).ReadAsArray().astype(np.int16))
+    out_ds.GetRasterBand(8).WriteArray(enlarge(vza, 4))
 
     # Write data
-    for b in range(stack.shape[2]):
-        out_ds.GetRasterBand(b + 1).WriteArray(stack[:, :, b])
+    for i, desc in enumerate(bands):
+        out_ds.GetRasterBand(i + 1).SetDescription(desc)
+        out_ds.GetRasterBand(i + 1).SetMetadataItem('Description', desc)
 
     # Close
     ga_ds = None
@@ -327,8 +359,6 @@ if __name__ == '__main__':
     # Optional arguments
     pattern = args['--pattern']
 
-    ncpu = int(args['--ncpu'])
-
     ndv = int(args['--nodata'])
 
     resume = args['--resume']
@@ -359,8 +389,10 @@ if __name__ == '__main__':
     else:
         blockysize = int(blockysize)
 
+    ncpu = int(args['--ncpu'])
     if ncpu > 1:
-        raise NotImplementedError('TODO - more CPUs!')
+        logger.warning('NCPU only supported for `numexpr` so far...')
+    ne.set_num_threads(ncpu)
 
     logger.debug('Finding pairs of MODIS data')
 
