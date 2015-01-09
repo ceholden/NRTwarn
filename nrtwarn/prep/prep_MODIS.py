@@ -46,7 +46,7 @@ logger = logging.getLogger(__name__)
 
 # Product subdataset information
 ga_state = 1  # 1km state flags
-ga_vza = 3  # 1km view zenith angle
+ga_vza = 2  # 1km view zenith angle
 ga_green = 13  # 500m green band
 ga_swir1 = 15  # 500m swir1 band
 ga_qc = 17  # 500m QC band
@@ -269,7 +269,7 @@ def create_stack(pair, output, ndv=-28672, compression='None',
     mask = get_mask(ds_state.GetRasterBand(1).ReadAsArray()).astype(np.int16)
     out_ds.GetRasterBand(7).WriteArray(enlarge(mask, 4))
 
-    vza = np.abs(ds_vza.GetRasterBand(1).ReadAsArray().astype(np.int16))
+    vza = ds_vza.GetRasterBand(1).ReadAsArray().astype(np.int16)
     out_ds.GetRasterBand(8).WriteArray(enlarge(vza, 4))
 
     # Write data
