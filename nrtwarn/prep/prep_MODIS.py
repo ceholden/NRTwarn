@@ -189,7 +189,7 @@ def create_stack(pair, output, ndv=-28672, compression='None',
 
     """
     # Outut band descriptions
-    bands = ['SR * 1000', 'NDVI * 10000',
+    bands = ['red/nir * 1000', 'NDVI * 10000',
              '250m Red * 10000', '250m NIR * 10000',
              '500m green * 10000', '500m SWIR1 * 10000',
              '1km QAQC Mask', '1km VZA * 100']
@@ -248,7 +248,7 @@ def create_stack(pair, output, ndv=-28672, compression='None',
         '(green <= 0) | (green >= 10000) | (swir1 <= 0) | (swir1 >= 10000)'
     invalid = ne.evaluate(eqn)
 
-    sr = ne.evaluate('nir / red * 1000').astype(np.int16)
+    sr = ne.evaluate('red / nir * 1000').astype(np.int16)
     ndvi = ne.evaluate('(nir - red) / (nir + red) * 10000').astype(np.int16)
 
     # Apply valid range mask to data
